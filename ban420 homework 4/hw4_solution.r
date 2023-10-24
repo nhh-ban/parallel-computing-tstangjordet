@@ -1,6 +1,14 @@
 # Assignment 1:  
 library(tweedie) 
 library(ggplot2)
+library(tictoc)
+library(tidyverse)
+library(doParallel)
+library(magrittr)
+library(dplyr)
+library(foreach)
+
+
 
 simTweedieTest <-  
   function(N){ 
@@ -26,6 +34,37 @@ df <-
     share_reject = NA) 
 
 
+# Problem 2.1 ----
+# Creating a log/ table here we can save all test results
+# Defining the log name
+TicTocLog <- 
+  # Creating a function without any variables
+  function() {
+    # Using a "tictoc"-package-function that logs the timing events "tic" and
+    # "toc"
+    tic.log() %>%
+      # Simplifying the list into a vector
+      unlist %>%
+      # Converting the vector into a tibble
+      tibble(logvals = .) %>%
+      # Separating the table into to columns
+      separate(logvals,
+               sep = ":",
+               into = c("Function type", "log")) %>%
+      # Modifying log column by removing unnecessary
+      mutate(log = str_trim(log)) %>%
+      # Separating the column log into seconds
+      separate(log,
+               sep = " ",
+               into = c("Seconds"),
+               extra = "drop")
+  }
+
+# Clearing the log if I do some modifications in the log-function
+tic.clearlog()
+
+# Starting the timer, and defining a test name
+tic("test_1") 
 for(i in 1:nrow(df)){ 
   df$share_reject[i] <-  
     MTweedieTests( 
@@ -33,9 +72,57 @@ for(i in 1:nrow(df)){
       M=df$M[i], 
       sig=.05) 
 } 
+# Stopping the timer and adding the test to the log
+toc(log = TRUE)
+
+# Print tictoc log into a nice table
+TicTocLog() |>
+knitr::kable()
+  
+
+# Problem 2.2 ----
+# Defining the number of cores in mye computer
+maxcores <- 4
+
+#Calculating number of cores I should use
+Cores <- min(parallel::detectCores(), maxcores)
+
+# Creating a cluster of the cores so they can work parallely
+cl <- makeCluster(Cores)
+
+# Register the cluster
+registerDoParallel(cores = Cores)
+
+# Starting the timer, and defining a test name
+tic(paste0("test_2,", Cores," cores")) 
+# Using foreach-function to make it possible for the cores to calculate 
+# separate line s
+
+foreach(
+  i = 1:nrow(df),
+  .combine = 'rbind',
+  .packages = c('magrittr', 'dplyr', 'tweedie')
+) %dopar%
+tibble(
+   N = df$N[i], 
+   M = df$M[i], 
+   share_reject =
+     MTweedieTests(
+       N=df$N[i],
+       M=df$M[i],
+       sig = .05
+       )
+  )
+stopCluster(cl)
+# Stopping the timer and adding the test to the log
+toc(log = TRUE)
+
+# Print tictoc log into a nice table
+TicTocLog() |>
+  knitr::kable()
 
 
-
+# Problem 2.2 ----
 
 ## Assignemnt 4 
    
