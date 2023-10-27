@@ -1,12 +1,17 @@
 # Assignment 1:  
 library(tweedie) 
 library(ggplot2)
+library(lubridate)
+library(purrr)
+library(forcats)
 library(tictoc)
 library(tidyverse)
 library(doParallel)
 library(magrittr)
 library(dplyr)
 library(foreach)
+library(furrr)
+library(tweedie)
 
 
 
@@ -24,7 +29,6 @@ MTweedieTests <-
   function(N,M,sig){ 
     sum(replicate(M,simTweedieTest(N)) < sig)/M 
   } 
-
 
 # Assignment 3:  
 df <-  
@@ -81,13 +85,13 @@ knitr::kable()
   
 
 # Problem 2.2 ----
-# Defining the number of cores in mye computer
+# Defining the number of cores in my computer
 maxcores <- 4
 
 #Calculating number of cores I should use
 Cores <- min(parallel::detectCores(), maxcores)
 
-# Creating a cluster of the cores so they can work parallely
+# Creating a cluster of the cores so they can work parallel
 cl <- makeCluster(Cores)
 
 # Register the cluster
@@ -96,23 +100,31 @@ registerDoParallel(cores = Cores)
 # Starting the timer, and defining a test name
 tic(paste0("test_2,", Cores," cores")) 
 # Using foreach-function to make it possible for the cores to calculate 
-# separate line s
-
+# separate lines parallel
 foreach(
+  # Value i equal the number of each line in df, starting from 1.
   i = 1:nrow(df),
+  # Merge all rows that is returned
   .combine = 'rbind',
+  # Packages required to execute the loop
   .packages = c('magrittr', 'dplyr', 'tweedie')
+# Initiating parallel calculations
 ) %dopar%
+# Creating a tibble for each iteration  
 tibble(
-   N = df$N[i], 
-   M = df$M[i], 
-   share_reject =
-     MTweedieTests(
-       N=df$N[i],
-       M=df$M[i],
-       sig = .05
-       )
-  )
+  # Value N equals value N in row i
+  N = df$N[i], 
+  # Value M equalls value M in row i
+  M = df$M[i], 
+  # Using the MtweedieTests-function to calculate the share reject from row i
+  share_reject =
+   MTweedieTests(
+     N=df$N[i],
+     M=df$M[i],
+     sig = .05
+     )
+)
+# Releasing the extra cores used to force the calculation to be faster
 stopCluster(cl)
 # Stopping the timer and adding the test to the log
 toc(log = TRUE)
@@ -122,98 +134,41 @@ TicTocLog() |>
   knitr::kable()
 
 
-# Problem 2.2 ----
-
-## Assignemnt 4 
-   
-# This is one way of solving it - maybe you have a better idea? 
-# First, write a function for simulating data, where the "type" 
-# argument controls the distribution. We also need to ensure 
-# that the mean "mu" is the same for both distributions. This 
-# argument will also be needed in the t-test for the null 
-# hypothesis. Therefore, if we hard code in a value here 
-# we may later have an inconsistency between the mean of the 
-# distributions and the t-test. So, we add it as an explicit 
-# argument:  
-
-
-library(magrittr)
-library(tidyverse)
-
-simDat <-
-  function(N, type, mu) {
-    if (type == "tweedie") {
-      return(rtweedie(
-        N,
-        mu = mu,
-        phi = 100,
-        power = 1.9
-      ))
+# Problem 2.3 ----
+MTweedieTests_parallel <- function(N, M, sig) {
+  results <- foreach(
+    j = 1:M,
+    .combine = 'rbind',
+    .packages = c('magrittr', 'dplyr', 'tweedie'),
+    .export = 'simTweedieTest'
+    ) %dopar% {
+      simTweedieTest(N) < sig
     }
-    if (type == "normal") {
-      return(rnorm(N, mean = mu))
-    }
-    else{
-      stop("invalid distribution")
-    }
+  sum(results) / M
   }
 
+# Creating a cluster of the cores so they can work parallel
+cl <- makeCluster(Cores)
 
-# Next, the test. Note, we use mu two places:
-# both for the data simulation and as the null.
-simTest <-
-  function(N, type, mu) {
-    t.test(simDat(N = N,
-                  type = type,
-                  mu = mu),
-           mu = mu)$p.value
-  }
+# Register the cluster
+registerDoParallel(cores = Cores)
 
+# Starting the timer, and defining a test name
+tic(paste0("test_3,", Cores," cores")) 
+for(i in 1:nrow(df)){ 
+  df$share_reject[i] <-  
+    MTweedieTests_parallel( 
+      N=df$N[i], 
+      M=df$M[i], 
+      sig=.05) 
+} 
+# Releasing the extra cores used to force the calculation to be faster
+stopCluster(cl)
+# Stopping the timer and adding the test to the log
+toc(log = TRUE)
 
-# Running many tests is almost the same as before.
-# Here the mean is hard coded in, as we're not
-# going to change it.
-MTests <-
-  function(N, M, type, sig) {
-    sum(replicate(M,
-                  simTest(
-                    N = N,
-                    type =
-                      type,
-                    mu =
-                      10000
-                  )) < sig) / M
-  }
+# Print tictoc log into a nice table
+TicTocLog() |>
+  knitr::kable()
 
 
-# We can now repeat the same analysis as before,
-# but for both the tweedie and the normal:
-df <-
-  expand.grid(
-    N = c(10, 100, 1000, 5000),
-    M = 1000,
-    type = c("tweedie", "normal"),
-    share_reject = NA
-  ) %>%
-  as_tibble()
-
-
-for (i in 1:nrow(df)) {
-  print(i)
-  df$share_reject[i] <-
-    MTests(df$N[i],
-           df$M[i],
-           df$type[i],
-           .05)
-}
-
-# As you see, with normally distributed data, N can
-# be very small and the t-test is fine. With a tweedie,
-# "large enough" can be many thousands. If we try
-# different distributions or parameterizations, we might
-# also get different results.
-df %>%
-  ggplot2::ggplot(aes(x = log(N), y = share_reject, col = type)) +
-  geom_line() +
-  geom_hline(yintercept = .05) +
-  theme_bw() 
